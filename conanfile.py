@@ -1,15 +1,16 @@
 from conans import ConanFile, tools, MSBuild
 from conanos.build import config_scheme
-import os
+import os, shutil
 
 class LibrtmpConan(ConanFile):
     name = "librtmp"
-    version = "2.4.r512-1"
+    version = "2.4"
+    release_version = "r512-1"
     description = "RTMPDump Real-Time Messaging Protocol API, a toolkit for RTMP streams"
     url = "https://github.com/conanos/librtmp"
     homepage = "http://rtmpdump.mplayerhq.hu/"
     license = "GPL-2.0"
-    exports = ["COPYING"]
+    exports = ["COPYING","librtmp.def"]
     generators = "visual_studio", "gcc"
     settings = "os", "compiler", "build_type", "arch"
     options = {"shared": [True, False], "fPIC": [True, False]}
@@ -29,7 +30,7 @@ class LibrtmpConan(ConanFile):
         config_scheme(self)
 
     def requirements(self):
-        self.requires.add("gnutls/3.5.19-2@conanos/stable")
+        self.requires.add("gnutls/3.5.19@conanos/stable")
         self.requires.add("nettle/3.4.1@conanos/stable")
         self.requires.add("gmp/6.1.2-5@conanos/stable")
 
@@ -37,10 +38,13 @@ class LibrtmpConan(ConanFile):
         self.build_requires("zlib/1.2.11@conanos/stable")
 
     def source(self):
+        version_ = self.version + "." + self.release_version
         url_='https://github.com/ShiftMediaProject/rtmpdump/archive/v{version}.tar.gz'
-        tools.get(url_.format(version=self.version))
-        extracted_dir = "rtmpdump-" + self.version
+        tools.get(url_.format(version=version_))
+        extracted_dir = "rtmpdump-" + version_
         os.rename(extracted_dir, self._source_subfolder)
+        if self.settings.os == 'Windows':
+            shutil.copy2(os.path.join(self.source_folder,"librtmp.def"), os.path.join(self.source_folder,self._source_subfolder,"SMP","librtmp.def"))
 
 
     def build(self):
@@ -78,6 +82,24 @@ class LibrtmpConan(ConanFile):
                 for i in ["lib","bin"]:
                     self.copy("*", dst=os.path.join(self.package_folder,i), src=os.path.join(self.build_folder,"..","msvc",i,rplatform))
             self.copy("*", dst=os.path.join(self.package_folder,"licenses"), src=os.path.join(self.build_folder,"..", "msvc","licenses"))
+
+            tools.mkdir(os.path.join(self.package_folder,"lib","pkgconfig"))
+            gmplib = "-lgmpd" if self.options.shared else "-lgmp"
+            replacements = {
+                "@prefix@"          : self.package_folder,
+                "@libdir@"          : "${prefix}/lib",
+                "@VERSION@"         : self.version,
+                "@CRYPTO_REQ@"      : "gnutls,hogweed,nettle",
+                "@PUBLIC_LIBS@"     : gmplib,
+                "@PRIVATE_LIBS@"    : "-lws2_32 -lwinmm -lgdi32",
+                "-lz"               : "-lzlib"
+            }
+            if self.options.shared:
+                replacements.update({"-lrtmp": "-lrtmpd"})
+            shutil.copy(os.path.join(self.build_folder,self._source_subfolder,"librtmp","librtmp.pc.in"),
+                        os.path.join(self.package_folder,"lib","pkgconfig","librtmp.pc"))
+            for s, r in replacements.items():
+                tools.replace_in_file(os.path.join(self.package_folder,"lib","pkgconfig","librtmp.pc"),s,r)
 
     def package_info(self):
         self.cpp_info.libs = tools.collect_libs(self)
